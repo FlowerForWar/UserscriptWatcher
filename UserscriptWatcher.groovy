@@ -121,6 +121,8 @@ class UserscriptWatcher {
 					if (!options.find{it=="once"} || !includes[root].contains(inc.canonicalPath)) {
 						includes[root] << inc.canonicalPath
 						replace = getCompiled(inc, root)
+						// replace = replace.trim()
+						replace = "\n\n${replace}"
 						if (options.find{it=="min"}) replace = replace.replaceAll(~/[\r\n\t]/, '')
 						if (options.find{it=="esc"}) replace = replace.replaceAll(~/([''""])/, '\\\\$1')
 						if (options.find{it=="b64"}) replace = "data:${Files.probeContentType(inc.toPath())};base64,${inc.bytes.encodeBase64().toString()}"
