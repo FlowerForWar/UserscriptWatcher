@@ -5,7 +5,35 @@ import com.sun.nio.file.*
 
 class UserscriptWatcher {
 	static main (args) {
-		def uw = new UserscriptWatcher(args)
+		List roots = []
+		Root root
+		args.each{arg->
+			if (arg[0..1] == '--' && root) {
+				String argName = arg[2..-1].split('=', 2)[0]
+				switch (argName) {
+					case 'name':
+						root.name = arg.split('=', 2)[1]
+						break
+				}
+			} else {
+				root = new Root(arg)
+				roots += root
+			}
+		}
+		def uw = new UserscriptWatcher(roots)
+	}
+
+	static class Root {
+		String path
+		String name
+
+		Root(String path) {
+			this.path = path
+		}
+
+		String getName() {
+			name ?: new File(path).name
+		}
 	}
 	
 	
@@ -15,7 +43,7 @@ class UserscriptWatcher {
 	Map imports = [:]
 	Map compiling = [:]
 	Map again = [:]
-	List roots = []
+	List<Root> roots = []
 	
 	UserscriptWatcher(roots) {
 		this.roots = roots
@@ -24,8 +52,10 @@ class UserscriptWatcher {
 	}
 	
 	def initWatcher() {
+		println ""
 		this.roots.each { root ->
-			Path path = Paths.get("${root}/src")
+			println "$root.path  -->  $root.name"
+			Path path = Paths.get("${root.path}/src")
 			WatchService ws = FileSystems.default.newWatchService()
 			
 			path.register(
@@ -64,21 +94,23 @@ class UserscriptWatcher {
 		}
 		compiling[root] = true
 		
-		def base = new File("$root/src/script.js")
-		def compiled = new File("$root/${new File(root).name}.user.js")
+		def base = new File(new File("${root.path}/src/script.js").canonicalPath)
+		def compiled = new File(new File("${root.path}/${root.name}.user.js").canonicalPath)
+		def compiledDev = new File(new File("${root.path}/${root.name}-DEV.user.js").canonicalPath)
 		
 		includes[base] = []
 		def compiledText = getCompiled(base, base).replaceAll(~/(?m)^(\s*)\/\/\s*\$\{imports\}$/, { str, match ->
 			def text = ""
 			text += "${match[1]}// ---------------- IMPORTS  ----------------\n"
 			imports.each{ path, content ->
-				text += "\n\n${match[1]}// ${Paths.get(new File(root).canonicalPath).relativize(Paths.get(path))}\n"
+				text += "\n\n${match[1]}// ${Paths.get(new File(root.path).canonicalPath).relativize(Paths.get(path))}\n"
 				text += content
 			}
 			text += "${match[1]}// ---------------- /IMPORTS ----------------\n"
 			return text
 		})
 		compiled.setText(compiledText, 'UTF-8')
+		compiledDev.setText(compiledText.replaceAll(~/(?m)^(\/\/\s*@version\s+).+$/, "\$1${UUID.randomUUID()}"), 'UTF-8')
 		
 		compiling[root] = false
 		if (again[root]) {
@@ -88,15 +120,16 @@ class UserscriptWatcher {
 	}
 	
 	def getCompiled(base, root) {
-		base.text
+		println "getCompiled: $base"
+		base.getText('UTF-8')
 			.replaceAll(~/(?m)^export /, '')
 			.replaceAll(~/(?m)^import .+? from "([^"]+?)";$/, { str, match ->
-				File inc = new File("${base.parent}/${match}")
+				File inc = new File(new File("${base.parent}/${match}").canonicalPath)
 				String replace = "// !!! CANNOT FIND: ${inc.canonicalPath}"
 				if (inc.exists()) {
 					if (!includes[root].contains(inc.canonicalPath)) {
-						imports[inc.canonicalPath] = getCompiled(inc, root)
 						includes[root] << inc.canonicalPath
+						imports[inc.canonicalPath] = getCompiled(inc, root)
 						replace = ""
 					} else {
 						replace = ""
@@ -105,7 +138,7 @@ class UserscriptWatcher {
 				replace
 			})
 			.replaceAll(~/(?:\s*\/\/\s*)?\$\{include: ([^{}]+)\}/, { str, match ->
-				File inc = new File("${base.parent}/${match}")
+				File inc = new File(new File("${base.parent}/${match}").canonicalPath)
 				String replace = "// !!! CANNOT FIND: ${inc.canonicalPath}"
 				if (inc.exists()) {
 					includes[root] << inc.canonicalPath
@@ -115,7 +148,7 @@ class UserscriptWatcher {
 			})
 			.replaceAll(~/(?:\s*\/\/\s*)?\$\{include-([a-z0-9\-]+): ([^{}]+)\}/, { str, opts, match ->
 				def options = opts.split('-')
-				File inc = new File("${base.parent}/${match}")
+				File inc = new File(new File("${base.parent}/${match}").canonicalPath)
 				String replace = "// !!! CANNOT FIND: ${inc.canonicalPath}"
 				if (inc.exists()) {
 					if (!options.find{it=="once"} || !includes[root].contains(inc.canonicalPath)) {
